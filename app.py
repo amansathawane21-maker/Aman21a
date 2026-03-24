@@ -3,74 +3,49 @@ import pandas as pd
 import plotly.express as px
 from sqlalchemy import create_engine
 
-# -----------------------------
-# PAGE CONFIG
-# -----------------------------
+st.set_page_config(page_title="Tennis Pro Dashboard", layout="wide")
 
-st.set_page_config(
-    page_title="Tennis Analytics Dashboard",
-    layout="wide"
+engine = create_engine("postgresql+psycopg2://postgres:postgres123@localhost:5432/tennis_data")
+
+# ---------------- TITLE ----------------
+
+st.markdown("<h1 style='text-align:center;color:#6C63FF;'>🎾 Tennis Pro Analytics Dashboard</h1>", unsafe_allow_html=True)
+st.markdown("<h4 style='text-align:center;color:gray;'>Player Rankings | Country Insights | Performance Trends</h4>", unsafe_allow_html=True)
+
+# ---------------- SIDEBAR ----------------
+st.sidebar.markdown("## 🎛 Dashboard Controls")
+
+rank_limit = st.sidebar.slider("Max Rank", 1, 500, 100)
+min_points = st.sidebar.slider("Min Points", 0, 10000, 0)
+
+# Country filter
+
+country_df = pd.read_sql("SELECT DISTINCT country FROM competitors", engine)
+selected_country = st.sidebar.selectbox("🌍 Country", ["All"] + country_df["country"].dropna().tolist())
+
+# Player filter
+
+player_df = pd.read_sql("SELECT name FROM competitors", engine)
+selected_player = st.sidebar.selectbox("🎾 Player", ["All"] + player_df["name"].dropna().tolist())
+search = st.sidebar.text_input("🔍 Search Player")
+
+# Venue filter
+
+venue_df = pd.read_sql("SELECT DISTINCT country_name FROM venues", engine)
+selected_venue = st.sidebar.selectbox("🏟 Venue Country", ["All"] + venue_df["country_name"].dropna().tolist())
+
+# Competition filter (if table exists)
+
+# Competition filter (SAFE VERSION)
+
+comp_df = pd.read_sql("SELECT DISTINCT competition_name FROM competitions", engine)
+
+selected_comp = st.sidebar.selectbox(
+    "🏆 Competition",
+    ["All"] + comp_df["competition_name"].dropna().tolist()
 )
 
-# -----------------------------
-# DATABASE CONNECTION
-# -----------------------------
-
-engine = create_engine(
-    "postgresql+psycopg2://postgres:post#@localhost:5432/tennis_data"
-)
-
-st.title("🎾 Tennis Rankings Explorer")
-
-# -----------------------------
-# SIDEBAR FILTERS
-# -----------------------------
-
-st.sidebar.header("🎛 Dashboard Filters")
-
-rank_limit = st.sidebar.slider(
-    "Maximum Rank",
-    1,
-    500,
-    50
-)
-
-min_points = st.sidebar.slider(
-    "Minimum Points",
-    0,
-    10000,
-    1000
-)
-
-country_list = pd.read_sql(
-    "SELECT DISTINCT country FROM competitors ORDER BY country",
-    engine
-)
-
-selected_country = st.sidebar.selectbox(
-    "Country",
-    ["All"] + country_list["country"].tolist()
-)
-
-top_n = st.sidebar.slider(
-    "Top Players Chart Size",
-    5,
-    20,
-    10
-)
-
-sort_option = st.sidebar.selectbox(
-    "Sort Rankings By",
-    ["Rank", "Points"]
-)
-
-search_player = st.sidebar.text_input(
-    "Search Competitor"
-)
-
-# -----------------------------
-# LOAD DATA
-# -----------------------------
+# ---------------- DATA ----------------
 
 query = f"""
 SELECT c.name, c.country, r.rank, r.points
@@ -83,189 +58,145 @@ AND r.points >= {min_points}
 
 df = pd.read_sql(query, engine)
 
-# Apply filters safely
+df = df[df["country"] == selected_country] if selected_country != "All" else df
+df = df[df["name"] == selected_player] if selected_player != "All" else df
+df = df[df["name"].str.contains(search, case=False)] if search else df
 
-if selected_country != "All":
-    df = df[df["country"] == selected_country]
+df = df.sort_values("rank")
 
-if search_player:
-    df = df[df["name"].str.contains(search_player, case=False)]
+# ---------------- KPIs ----------------
 
-if sort_option == "Rank":
-    df = df.sort_values("rank")
-else:
-    df = df.sort_values("points", ascending=False)
+st.markdown("## 📊 Key Performance Indicators")
 
-# -----------------------------
-# SAFETY CHECK
-# -----------------------------
+col1, col2, col3, col4 = st.columns(4)
 
-if df.empty:
-    st.warning("No players found for the selected filters. Please adjust filters.")
-    st.stop()
-
-# -----------------------------
-# KPI CARDS
-# -----------------------------
-
-col1, col2, col3 = st.columns(3)
-
-col1.metric("Players Loaded", len(df))
-col2.metric("Average Points", int(df["points"].mean()) if not df.empty else 0)
-col3.metric("Highest Points", int(df["points"].max()) if not df.empty else 0)
+col1.metric("🎾 Players", len(df))
+col2.metric("🌍 Countries", df["country"].nunique())
+col3.metric("⭐ Avg Points", int(df["points"].mean()) if len(df)>0 else 0)
+col4.metric("🔥 Max Points", int(df["points"].max()) if len(df)>0 else 0)
 
 st.divider()
 
-# -----------------------------
-# TOP PLAYER HIGHLIGHT
-# -----------------------------
+# ---------------- TOP PLAYERS CHART ----------------
 
-top_player = df.iloc[0] if not df.empty else None
+st.markdown("## 🏆 Top 10 Players")
 
-if top_player is not None:
+top_df = df.head(10)
 
-    st.subheader("🌟 Current Top Ranked Player")
-
-    st.info(
-        f"""
-Player: **{top_player['name']}**
-
-Country: **{top_player['country']}**
-
-Rank: **{top_player['rank']}**
-
-Points: **{top_player['points']}**
-"""
-    )
-
-st.divider()
-
-# -----------------------------
-# RANKINGS TABLE + CHART
-# -----------------------------
-
-col1, col2 = st.columns(2)
-
-with col1:
-
-    st.subheader("🏆 Rankings Table")
-    st.dataframe(df, use_container_width=True)
-
-with col2:
-
-    st.subheader("Top Players by Points")
-
-    top_players = df.head(min(top_n, len(df)))
-
-    fig = px.bar(
-        top_players,
-        x="name",
-        y="points",
-        color="points",
-        color_continuous_scale="viridis"
-    )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-st.divider()
-
-# -----------------------------
-# COUNTRY ANALYSIS
-# -----------------------------
-
-st.subheader("🌍 Player Distribution by Country")
-
-country_query = """
-SELECT country, COUNT(*) as players
-FROM competitors
-GROUP BY country
-ORDER BY players DESC
-LIMIT 10
-"""
-
-country_df = pd.read_sql(country_query, engine)
-
-fig2 = px.bar(
-    country_df,
-    x="country",
-    y="players",
-    color="players",
-    color_continuous_scale="plasma"
+fig_top = px.bar(
+top_df,
+x="name",
+y="points",
+color="points",
+color_continuous_scale="viridis",
+title="Top Players by Points"
 )
 
-st.plotly_chart(fig2, use_container_width=True)
+st.plotly_chart(fig_top, use_container_width=True)
 
-st.divider()
+# ---------------- BOTTOM PLAYERS CHART ----------------
 
-# -----------------------------
-# RANK DISTRIBUTION
-# -----------------------------
+st.markdown("## 🔻 Bottom 10 Players")
 
-st.subheader("📈 Rank Distribution")
+bottom_df = df.tail(10)
 
-fig3 = px.histogram(
-    df,
-    x="rank",
-    nbins=25,
-    color_discrete_sequence=["#4B4146"]
+fig_bottom = px.bar(
+bottom_df,
+x="name",
+y="points",
+color="points",
+color_continuous_scale="reds",
+title="Lowest Ranked Players"
 )
 
-st.plotly_chart(fig3, use_container_width=True)
+st.plotly_chart(fig_bottom, use_container_width=True)
 
 st.divider()
 
-# -----------------------------
-# VENUE ANALYSIS
-# -----------------------------
+# ---------------- COUNTRY ANALYSIS ----------------
 
-st.subheader("🏟 Venue Distribution")
+st.markdown("## 🌍 Country Participation")
 
-venue_query = """
-SELECT country_name, COUNT(*) as venues
-FROM venues
-GROUP BY country_name
-ORDER BY venues DESC
-LIMIT 10
-"""
+country_data = df["country"].value_counts().reset_index()
+country_data.columns = ["country", "players"]
 
-venue_df = pd.read_sql(venue_query, engine)
-
-fig4 = px.pie(
-    venue_df,
-    names="country_name",
-    values="venues",
-    title="Venues by Country"
+fig_country = px.bar(
+country_data,
+x="country",
+y="players",
+color="players",
+color_continuous_scale="plasma"
 )
 
-st.plotly_chart(fig4, use_container_width=True)
-
-
-# -----------------------------
-# WORLD MAP OF PLAYERS
-# -----------------------------
+st.plotly_chart(fig_country, use_container_width=True)
 
 st.divider()
 
-st.subheader("🌍 Global Player Distribution")
+# ---------------- RANK DISTRIBUTION ----------------
 
-map_query = """
-SELECT country, COUNT(*) as players
-FROM competitors
-GROUP BY country
-"""
+st.markdown("## 📊 Rank vs Points Insight")
 
-map_df = pd.read_sql(map_query, engine)
+# Scatter (BEST visualization 🔥)
 
-# Convert country names to uppercase for better mapping
-map_df["country"] = map_df["country"].str.upper()
+fig_scatter = px.scatter(
+df,
+x="rank",
+y="points",
+color="points",
+size="points",
+hover_name="name",
+color_continuous_scale="viridis",
+title="Rank vs Points Relationship"
+)
+
+st.plotly_chart(fig_scatter, use_container_width=True)
+
+st.divider()
+
+# Box plot (distribution clarity)
+
+fig_box = px.box(
+df,
+x="country",
+y="rank",
+color="country",
+title="Rank Distribution by Country"
+)
+
+st.plotly_chart(fig_box, use_container_width=True)
+
+
+# ---------------- MAP ----------------
+
+st.markdown("## 🌍 Global Player Distribution")
+
+map_df = df["country"].value_counts().reset_index()
+map_df.columns = ["country", "players"]
 
 fig_map = px.choropleth(
-    map_df,
-    locations="country",
-    locationmode="country names",
-    color="players",
-    color_continuous_scale="Blues",
-    title="Tennis Players by Country"
+map_df,
+locations="country",
+locationmode="country names",
+color="players",
+color_continuous_scale="blues"
 )
 
 st.plotly_chart(fig_map, use_container_width=True)
+
+st.divider()
+
+# ---------------- TREND ----------------
+
+st.markdown("## 📈 Performance Trend (Forecast View)")
+
+trend_df = df.head(30)
+
+fig_trend = px.line(
+trend_df,
+x="rank",
+y="points",
+markers=True,
+title="Points vs Rank Trend"
+)
+
+st.plotly_chart(fig_trend, use_container_width=True)
